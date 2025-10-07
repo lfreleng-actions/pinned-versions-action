@@ -84,7 +84,13 @@ runs:
           echo 'No changes in scope for check ⏩'
           echo 'workflow_changes=false' >> "$GITHUB_ENV"
         else
+          # Fixes bug where grep exits with error when all files changed
           grep -Fvf changed.txt github.txt > unmodified.txt
+          status=$?
+          if [ $status -ne 0 ] && [ $status -ne 1 ]; then
+            echo "Error: grep failed with exit code $status" >&2
+            exit $status
+          fi
           while IFS= read -r yamlfile
           do
             rm "$yamlfile"
