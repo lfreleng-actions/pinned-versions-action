@@ -10,11 +10,9 @@ inputs:
   path_prefix:
     description: 'Directory location containing project code'
     required: false
-    type: 'string'
     default: '.'
   no_checkout:
     description: 'Do not checkout local repository; used for testing'
-    type: 'boolean'
     required: false
     default: false
 
