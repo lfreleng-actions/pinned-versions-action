@@ -14,8 +14,8 @@ Linux Foundation Release Engineering team. It validates that GitHub Actions
 workflow and action calls in the repository pin to immutable commit SHAs,
 and that the referenced repositories, tags, branches and commits exist.
 
-The CLI is fetched and run via [`uvx`][uvx] (`astral-sh/setup-uv`), so no
-local Python environment setup is required.
+The action installs and runs the CLI via [`uvx`][uvx]
+(`astral-sh/setup-uv`), so callers need no local Python environment.
 
 [gwl]: https://github.com/lfreleng-actions/gha-workflow-linter
 [uvx]: https://docs.astral.sh/uv/guides/tools/
@@ -85,22 +85,21 @@ When set, the action invokes
 When triggered against a `pull_request` event, the action:
 
 1. Checks out the PR head (with full history).
-2. Calls [`repository-metadata-action`][rma] to obtain the list of files
-   changed in the pull request. All summary outputs and artifact uploads
-   from that action are suppressed (`github_summary`, `gerrit_summary`,
-   `files_summary`, and `artifact_upload` all set to `false`) so that
-   workflows already invoking that action elsewhere do not see duplicated
+2. Calls [`repository-metadata-action`][rma] to fetch the list of files
+   that the pull request changes. The action sets all summary outputs
+   and artifact uploads from that action to `false` (`github_summary`,
+   `gerrit_summary`, `files_summary`, and `artifact_upload`) so that
+   workflows already invoking that action elsewhere do not see duplicate
    `GITHUB_STEP_SUMMARY` content.
 3. Filters the changed-files list to YAML files under
    `<path_prefix>/.github/` (workflows under `.github/workflows/` and
    composite-action `action.yaml` files under `.github/actions/`).
 4. Invokes `gha-workflow-linter lint` with one `--files` argument per
-   matched file, validating only those.
+   matched file, validating that subset of files.
 
-If the change does not touch any workflow or composite-action YAML, the
-linter step is skipped and the action exits successfully. Set the
-`full_scan` input to `true` to force a full-tree scan even on pull
-requests.
+If the change touches no workflow or composite-action YAML, the action
+skips the linter step and exits with success. Set the `full_scan` input
+to `true` to force a full-tree scan even on pull requests.
 
 [rma]: https://github.com/lfreleng-actions/repository-metadata-action
 
@@ -112,10 +111,11 @@ workflow tree.
 
 ### Auto-fix
 
-The linter's auto-fix mode is **disabled** when run from this action
-(`--no-auto-fix`). Rewrites in an ephemeral CI runner are discarded and
-silently mask validation errors. Run `gha-workflow-linter lint
---auto-fix` locally to migrate a repository, then commit the result.
+The action **disables** the linter's auto-fix mode (`--no-auto-fix`).
+Ephemeral CI runners throw away any rewrites the linter makes, which
+hides validation errors from the workflow log. Run `gha-workflow-linter
+lint --auto-fix` locally to migrate a repository, then commit the
+result.
 
 The action passes `GITHUB_TOKEN` (the workflow's GitHub token) to the
 linter so that GraphQL API calls authenticate and avoid rate limits.
