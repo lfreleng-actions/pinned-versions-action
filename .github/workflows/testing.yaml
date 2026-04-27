@@ -19,7 +19,7 @@ jobs:
   ### Test the GitHub Action in this Repository ###
   tests:
     name: "Test local GitHub Action"
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: read

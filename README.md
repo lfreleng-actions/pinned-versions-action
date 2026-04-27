@@ -39,7 +39,7 @@ on:
 ```yaml
 jobs:
   check-actions:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
