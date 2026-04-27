@@ -53,12 +53,12 @@ jobs:
 
 <!-- markdownlint-disable MD013 -->
 
-| Variable Name | Required | Default                         | Description                                              |
-| ------------- | -------- | ------------------------------- | -------------------------------------------------------- |
-| path_prefix   | False    | '.' (current working directory) | Directory location containing project code               |
-| no_checkout   | False    | false                           | Don't perform a checkout of the local repository         |
-| full_scan     | False    | false                           | Force a full repository scan, even on `pull_request`     |
-| linter_version| False    | (latest)                        | Pin `gha-workflow-linter` to a specific PyPI version     |
+| Variable Name  | Required | Default                         | Description                                          |
+| -------------- | -------- | ------------------------------- | ---------------------------------------------------- |
+| path_prefix    | False    | '.' (current working directory) | Directory location containing project code           |
+| no_checkout    | False    | false                           | Don't perform a checkout of the local repository     |
+| full_scan      | False    | false                           | Force a full repository scan, even on `pull_request` |
+| linter_version | False    | (latest)                        | Pin `gha-workflow-linter` to a specific PyPI version |
 
 <!-- markdownlint-enable MD013 -->
 
