@@ -15,25 +15,35 @@ inputs:
     description: 'Do not checkout local repository; used for testing'
     required: false
     default: 'false'
+  full_scan:
+    description: >-
+      Force a full repository scan even on pull_request events
+      (default: pull_request events scan only changed workflow files)
+    required: false
+    default: 'false'
 
 runs:
   using: 'composite'
   steps:
-    # Checkout repository on manual invocation
+    # Checkout repository on manual invocation (or any non-PR event)
     - name: 'Checkout repository'
       # yamllint disable-line rule:line-length
-      if: github.event_name == 'workflow_dispatch' && inputs.no_checkout != 'true'
+      if: github.event_name != 'pull_request' && inputs.no_checkout != 'true'
       # yamllint disable-line rule:line-length
       uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      with:
+        # Need history so repository-metadata-action's git fallback works
+        fetch-depth: 0
 
     # Checkout change when invoked on a pull request
     - name: 'Checkout pull request'
       # yamllint disable-line rule:line-length
-      if: github.event_name != 'workflow_dispatch' && inputs.no_checkout != 'true'
+      if: github.event_name == 'pull_request' && inputs.no_checkout != 'true'
       # yamllint disable-line rule:line-length
       uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       with:
         ref: "${{ github.event.pull_request.head.sha }}"
+        fetch-depth: 0
 
     - name: 'Check path_prefix directory'
       if: inputs.path_prefix != '.'
@@ -52,12 +62,103 @@ runs:
       with:
         enable-cache: true
 
-    - name: 'Run gha-workflow-linter'
+    # ------------------------------------------------------------------
+    # Pull request: gather changed workflow/action YAML files via
+    # repository-metadata-action and lint only those. All step-summary
+    # output and artifact uploads from that action are suppressed; other
+    # actions/workflows in the same job typically already render that
+    # summary content, so we deliberately avoid duplicating it here.
+    # ------------------------------------------------------------------
+    - name: 'Repository metadata (pull request changed files)'
+      id: metadata
+      # yamllint disable-line rule:line-length
+      if: github.event_name == 'pull_request' && inputs.full_scan != 'true'
+      # yamllint disable-line rule:line-length
+      uses: lfreleng-actions/repository-metadata-action@ceabcd987d13d7bfefd2372e01eebb0ddac45956 # v0.2.0
+      with:
+        github_token: ${{ github.token }}
+        github_summary: 'false'
+        gerrit_summary: 'false'
+        files_summary: 'false'
+        artifact_upload: 'false'
+
+    - name: 'Filter changed workflow/action files'
+      id: filter
+      # yamllint disable-line rule:line-length
+      if: github.event_name == 'pull_request' && inputs.full_scan != 'true'
+      shell: bash
+      env:
+        CHANGED_FILES: ${{ steps.metadata.outputs.changed_files }}
+        PATH_PREFIX: ${{ inputs.path_prefix }}
+      run: |
+        # Filter changed files to YAML under .github (rel to path_prefix)
+        prefix="${PATH_PREFIX%/}"
+        if [ "$prefix" = "." ] || [ -z "$prefix" ]; then
+          gh_dir=".github"
+        else
+          gh_dir="${prefix}/.github"
+        fi
+
+        : > matched.txt
+        # changed_files from repository-metadata-action is newline-separated
+        while IFS= read -r f; do
+          [ -z "$f" ] && continue
+          # Match any *.yml or *.yaml under <gh_dir>/ (recursive)
+          if [ "${f#"${gh_dir}/"}" != "$f" ]; then
+            case "$f" in
+              *.yml|*.yaml)
+                # Confirm the file still exists in the checkout (renames /
+                # deletions may otherwise drop out)
+                if [ -f "$f" ]; then
+                  echo "$f" >> matched.txt
+                fi
+                ;;
+            esac
+          fi
+        done <<< "$CHANGED_FILES"
+
+        if [ -s matched.txt ]; then
+          count=$(wc -l < matched.txt | tr -d ' ')
+          echo "Found $count changed workflow/action file(s) to lint:"
+          sed 's/^/  - /' matched.txt
+          echo "have_changes=true" >> "$GITHUB_OUTPUT"
+        else
+          echo 'No workflow/action changes in scope for check ⏩'
+          echo "have_changes=false" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: 'Run gha-workflow-linter (pull request changed files)'
+      # yamllint disable-line rule:line-length
+      if: github.event_name == 'pull_request' && inputs.full_scan != 'true' && steps.filter.outputs.have_changes == 'true'
       shell: bash
       env:
         GITHUB_TOKEN: ${{ github.token }}
       run: |
-        # Run gha-workflow-linter via uvx (requires SHA pinning by default)
+        # Lint only the changed workflow/action files (no auto-fix in CI:
+        # rewrites in ephemeral runners are pointless and would mask errors)
+        args=(--no-auto-fix)
+        while IFS= read -r f; do
+          [ -z "$f" ] && continue
+          args+=(--files "$f")
+        done < matched.txt
+
+        echo "Running gha-workflow-linter on changed files only"
+        uvx --from gha-workflow-linter gha-workflow-linter lint \
+          "${args[@]}"
+
+    # ------------------------------------------------------------------
+    # Full scan: workflow_dispatch, push, schedule, full_scan=true, etc.
+    # ------------------------------------------------------------------
+    - name: 'Run gha-workflow-linter (full scan)'
+      # yamllint disable-line rule:line-length
+      if: github.event_name != 'pull_request' || inputs.full_scan == 'true'
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+      run: |
+        # Run gha-workflow-linter against the full path_prefix
+        # (no auto-fix: see note in PR-changed-files step above)
         echo "Running gha-workflow-linter against: ${{ inputs.path_prefix }}"
         uvx --from gha-workflow-linter gha-workflow-linter lint \
+          --no-auto-fix \
           "${{ inputs.path_prefix }}"

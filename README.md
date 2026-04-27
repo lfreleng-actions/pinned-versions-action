@@ -53,47 +53,61 @@ jobs:
 
 <!-- markdownlint-disable MD013 -->
 
-| Variable Name | Required | Default                         | Description                                      |
-| ------------- | -------- | ------------------------------- | ------------------------------------------------ |
-| path_prefix   | False    | '.' (current working directory) | Directory location containing project code       |
-| no_checkout   | False    | false                           | Don't perform a checkout of the local repository |
+| Variable Name | Required | Default                         | Description                                              |
+| ------------- | -------- | ------------------------------- | -------------------------------------------------------- |
+| path_prefix   | False    | '.' (current working directory) | Directory location containing project code               |
+| no_checkout   | False    | false                           | Don't perform a checkout of the local repository         |
+| full_scan     | False    | false                           | Force a full repository scan, even on `pull_request`     |
 
 <!-- markdownlint-enable MD013 -->
 
 ## Behaviour
 
-The action:
+### Pull Requests
 
-1. Checks out the repository (or the pull request HEAD).
-2. Installs [`uv`][uvx] via `astral-sh/setup-uv`.
-3. Invokes `gha-workflow-linter lint` against `path_prefix` using `uvx`,
-   which downloads and runs the latest published release on demand.
+When triggered against a `pull_request` event, the action:
 
-By default `gha-workflow-linter` enforces SHA pinning for all action and
-workflow calls; the action fails if any reference uses a tag, branch, or
-unpinned value, or if a referenced repository or commit cannot be resolved.
+1. Checks out the PR head (with full history).
+2. Calls [`repository-metadata-action`][rma] to obtain the list of files
+   changed in the pull request. All summary outputs and artifact uploads
+   from that action are suppressed (`github_summary`, `gerrit_summary`,
+   `files_summary`, and `artifact_upload` all set to `false`) so that
+   workflows already invoking that action elsewhere do not see duplicated
+   `GITHUB_STEP_SUMMARY` content.
+3. Filters the changed-files list to YAML files under
+   `<path_prefix>/.github/` (workflows under `.github/workflows/` and
+   composite-action `action.yaml` files under `.github/actions/`).
+4. Invokes `gha-workflow-linter lint` with one `--files` argument per
+   matched file, validating only those.
+
+If the change does not touch any workflow or composite-action YAML, the
+linter step is skipped and the action exits successfully. Set the
+`full_scan` input to `true` to force a full-tree scan even on pull
+requests.
+
+[rma]: https://github.com/lfreleng-actions/repository-metadata-action
+
+### Manual / push / scheduled invocation
+
+For any non-`pull_request` event (or when `full_scan: 'true'`), the
+action runs `gha-workflow-linter lint <path_prefix>` against the entire
+workflow tree.
+
+### Auto-fix
+
+The linter's auto-fix mode is **disabled** when run from this action
+(`--no-auto-fix`). Rewrites in an ephemeral CI runner are discarded and
+silently mask validation errors. Run `gha-workflow-linter lint
+--auto-fix` locally to migrate a repository, then commit the result.
 
 The action passes `GITHUB_TOKEN` (the workflow's GitHub token) to the
 linter so that GraphQL API calls authenticate and avoid rate limits.
-
-### Pull Requests
-
-When triggered against a pull request, the action checks out the PR head
-and lints the workflows present in the change. The linter scans the entire
-repository's workflow tree; this differs from earlier versions of the
-action which only scanned the diff. Repositories that already use SHA
-pinning across the tree see no change in behaviour; repositories that do
-not should run the linter once with `--auto-fix` locally to migrate.
-
-### Manual Invocation
-
-When invoked via `workflow_dispatch` the action checks out and lints the
-default branch state.
 
 ## Implementation Details
 
 The previous implementation combined `tj-actions/changed-files` with
 `zgosalvez/github-actions-ensure-sha-pinned-actions`. This release
-replaces both with `gha-workflow-linter`, which provides SHA pinning
-enforcement, repository/reference validation, caching and auto-fix
-support in a single tool maintained alongside this action.
+replaces both with `gha-workflow-linter` (and uses our own
+`repository-metadata-action` to scope pull-request runs), providing
+SHA pinning enforcement, repository/reference validation, caching and
+auto-fix support in a single tool maintained alongside this action.

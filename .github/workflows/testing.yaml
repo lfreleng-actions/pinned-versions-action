@@ -27,29 +27,41 @@ jobs:
       - name: 'Checkout repository'
         # yamllint disable-line rule:line-length
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
 
-      # Initial test of local repository (this repo's own workflows)
+      # Test 1: default behaviour (pull_request -> changed-files only;
+      # other events -> full scan)
       - name: "Running local action: ${{ github.repository }}"
         uses: ./
         with:
           no_checkout: true
 
-      # Perform setup prior to running test(s)
+      # Test 2: force a full scan irrespective of event
+      - name: "Running local action: ${{ github.repository }} [full_scan]"
+        uses: ./
+        with:
+          no_checkout: true
+          full_scan: 'true'
+
+      # Test 3: scan a sample external project
       - name: 'Checkout sample project repository'
         # yamllint disable-line rule:line-length
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           repository: "lfreleng-actions/test-python-project"
           path: 'test-python-project'
+          fetch-depth: 0
 
-      # Test downloaded sample Python project
       # yamllint disable-line rule:line-length
       - name: "Running local action: ${{ github.repository }} [test-python-project]"
         uses: ./
         with:
           path_prefix: 'test-python-project'
           no_checkout: true
+          full_scan: 'true'
 
+      # Test 4: invalid path_prefix should fail
       # yamllint disable-line rule:line-length
       - name: "Running local action: ${{ github.repository }} [Override Failure]"
         uses: ./
@@ -59,7 +71,6 @@ jobs:
           path_prefix: "/tmp/invalid-path"
           no_checkout: true
 
-      # Failure testing is also important
       - name: "Error if step above did NOT fail"
         if: steps.failure.outcome == 'success'
         shell: bash
