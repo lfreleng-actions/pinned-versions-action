@@ -42,12 +42,27 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      # pull-requests: read lets the metadata step list PR-changed
+      # files on pull_request events. Safe to grant unconditionally;
+      # ignored on other events.
+      pull-requests: read
     steps:
       - name: 'Check Pinned Versions'
-        uses: lfreleng-actions/pinned-versions-action@main
+        # yamllint disable-line rule:line-length
+        uses: lfreleng-actions/pinned-versions-action@38f4a2758d6314213f744dba3f0d68335e5562bf # v0.1.2
 ```
 
 <!-- markdownlint-enable MD013 -->
+
+### Required permissions
+
+The action needs the following permissions on `GITHUB_TOKEN`:
+
+- `contents: read` — to check out the repository.
+- `pull-requests: read` — needed on `pull_request` events so the
+  embedded `repository-metadata-action` can list the files that the
+  pull request changes. Without this permission, PR-scoped runs fail
+  in the metadata step.
 
 ## Inputs
 
@@ -68,12 +83,17 @@ By default the action runs the **latest** released `gha-workflow-linter`
 from PyPI on each invocation. To pin a specific version (and avoid
 non-deterministic behaviour across runs), set `linter_version`:
 
+<!-- markdownlint-disable MD013 -->
+
 ```yaml
 - name: 'Check Pinned Versions'
-  uses: lfreleng-actions/pinned-versions-action@main
+  # yamllint disable-line rule:line-length
+  uses: lfreleng-actions/pinned-versions-action@38f4a2758d6314213f744dba3f0d68335e5562bf # v0.1.2
   with:
     linter_version: '1.0.2'
 ```
+
+<!-- markdownlint-enable MD013 -->
 
 When set, the action invokes
 `uvx --from gha-workflow-linter==<version> ...`.
@@ -84,16 +104,19 @@ When set, the action invokes
 
 When triggered against a `pull_request` event, the action:
 
-1. Checks out the PR head (with full history).
+1. Checks out the PR head (default shallow checkout).
 2. Calls [`repository-metadata-action`][rma] to fetch the list of files
    that the pull request changes. The action sets all summary outputs
    and artifact uploads from that action to `false` (`github_summary`,
    `gerrit_summary`, `files_summary`, and `artifact_upload`) so that
    workflows already invoking that action elsewhere do not see duplicate
    `GITHUB_STEP_SUMMARY` content.
-3. Filters the changed-files list to YAML files under
-   `<path_prefix>/.github/` (workflows under `.github/workflows/` and
-   composite-action `action.yaml` files under `.github/actions/`).
+3. Restricts the changed-files list to workflow / composite-action
+   definitions: any `*.yml` or `*.yaml` under
+   `<path_prefix>/.github/workflows/`, plus `action.yml` / `action.yaml`
+   files under `<path_prefix>/.github/actions/`. Other YAML under
+   `.github/` (for example `dependabot.yml` or `actionlint.yaml`) falls
+   outside this scope and the action ignores it.
 4. Invokes `gha-workflow-linter lint` with one `--files` argument per
    matched file, validating that subset of files.
 

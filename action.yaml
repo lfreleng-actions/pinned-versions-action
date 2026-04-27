@@ -39,8 +39,9 @@ runs:
       # yamllint disable-line rule:line-length
       uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       with:
-        # Need history so repository-metadata-action's git fallback works
-        fetch-depth: 0
+        # Read-only checkout: the action only inspects working-tree files,
+        # so a shallow checkout suffices and credentials need not persist.
+        persist-credentials: false
 
     # Checkout change when invoked on a pull request
     - name: 'Checkout pull request'
@@ -50,7 +51,8 @@ runs:
       uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       with:
         ref: "${{ github.event.pull_request.head.sha }}"
-        fetch-depth: 0
+        # Read-only checkout: shallow + no persisted credentials.
+        persist-credentials: false
 
     - name: 'Check path_prefix directory'
       if: inputs.path_prefix != '.'
@@ -62,28 +64,6 @@ runs:
           echo "${{ inputs.path_prefix }}"
           exit 1
         fi
-
-    - name: 'Setup uv'
-      # yamllint disable-line rule:line-length
-      uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
-      with:
-        enable-cache: true
-
-    - name: 'Resolve gha-workflow-linter version'
-      id: resolve_version
-      shell: bash
-      env:
-        LINTER_VERSION: ${{ inputs.linter_version }}
-      run: |
-        # Build the uvx '--from' specifier; pin to a version when supplied
-        if [ -n "$LINTER_VERSION" ]; then
-          spec="gha-workflow-linter==${LINTER_VERSION}"
-          echo "Pinning gha-workflow-linter to version: ${LINTER_VERSION}"
-        else
-          spec="gha-workflow-linter"
-          echo "Using latest released gha-workflow-linter from PyPI"
-        fi
-        echo "uvx_from=${spec}" >> "$GITHUB_OUTPUT"
 
     # ------------------------------------------------------------------
     # Pull request: gather changed workflow/action YAML files via
@@ -114,41 +94,109 @@ runs:
         CHANGED_FILES: ${{ steps.metadata.outputs.changed_files }}
         PATH_PREFIX: ${{ inputs.path_prefix }}
       run: |
-        # Filter changed files to YAML under .github (rel to path_prefix)
-        prefix="${PATH_PREFIX%/}"
+        # Filter changed files to YAML under .github (rel to path_prefix).
+        # Normalise the prefix so common relative variants ('./sub', 'sub/')
+        # match the unprefixed paths emitted by repository-metadata-action.
+        prefix="${PATH_PREFIX#./}"
+        prefix="${prefix%/}"
         if [ "$prefix" = "." ] || [ -z "$prefix" ]; then
           gh_dir=".github"
         else
           gh_dir="${prefix}/.github"
         fi
 
-        : > matched.txt
+        # Write the matched-files list under RUNNER_TEMP so we never clash
+        # with files in the caller repository's workspace.
+        matched_file="${RUNNER_TEMP:-/tmp}/pinned-versions-matched.txt"
+        : > "$matched_file"
+        # Restrict the match to actual workflow/composite-action definitions
+        # (anything else under .github/ — such as dependabot.yml or
+        # actionlint.yaml — is not in scope for SHA-pin / call-target
+        # validation and may not even be valid GHA YAML).
+        workflows_dir="${gh_dir}/workflows"
+        actions_dir="${gh_dir}/actions"
+
         # changed_files from repository-metadata-action is newline-separated
         while IFS= read -r f; do
           [ -z "$f" ] && continue
-          # Match any *.yml or *.yaml under <gh_dir>/ (recursive)
-          if [ "${f#"${gh_dir}/"}" != "$f" ]; then
+          match=false
+          # Workflow files: any *.yml/*.yaml directly under .github/workflows/
+          # (GitHub does not recurse, but we accept nested paths defensively).
+          if [ "${f#"${workflows_dir}/"}" != "$f" ]; then
             case "$f" in
-              *.yml|*.yaml)
-                # Confirm the file still exists in the checkout (renames /
-                # deletions may otherwise drop out)
-                if [ -f "$f" ]; then
-                  echo "$f" >> matched.txt
-                fi
-                ;;
+              *.yml|*.yaml) match=true ;;
             esac
+          fi
+          # Composite actions: action.yml / action.yaml under
+          # .github/actions/, including the root-level case
+          # (.github/actions/action.yml without an intermediate dir).
+          if [ "$match" = false ] \
+            && [ "${f#"${actions_dir}/"}" != "$f" ]; then
+            case "${f#"${actions_dir}/"}" in
+              action.yml|action.yaml|*/action.yml|*/action.yaml)
+                match=true ;;
+            esac
+          fi
+          if [ "$match" = true ]; then
+            # Confirm the file still exists in the checkout (renames /
+            # deletions may otherwise drop out)
+            if [ -f "$f" ]; then
+              echo "$f" >> "$matched_file"
+            fi
           fi
         done <<< "$CHANGED_FILES"
 
-        if [ -s matched.txt ]; then
-          count=$(wc -l < matched.txt | tr -d ' ')
+        if [ -s "$matched_file" ]; then
+          count=$(wc -l < "$matched_file" | tr -d ' ')
           echo "Found $count changed workflow/action file(s) to lint:"
-          sed 's/^/  - /' matched.txt
+          sed 's/^/  - /' "$matched_file"
           echo "have_changes=true" >> "$GITHUB_OUTPUT"
+          echo "matched_file=${matched_file}" >> "$GITHUB_OUTPUT"
         else
           echo 'No workflow/action changes in scope for check ⏩'
           echo "have_changes=false" >> "$GITHUB_OUTPUT"
         fi
+
+    # ------------------------------------------------------------------
+    # Install uv and resolve the linter version only when we know the
+    # linter will actually run. On pull_request events that touch no
+    # workflow/action YAML, this avoids an unnecessary uv install and
+    # PyPI fetch.
+    # ------------------------------------------------------------------
+    - name: 'Setup uv'
+      # yamllint disable-line rule:line-length
+      if: github.event_name != 'pull_request' || inputs.full_scan == 'true' || steps.filter.outputs.have_changes == 'true'
+      # yamllint disable-line rule:line-length
+      uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+      with:
+        enable-cache: true
+
+    - name: 'Resolve gha-workflow-linter version'
+      id: resolve_version
+      # yamllint disable-line rule:line-length
+      if: github.event_name != 'pull_request' || inputs.full_scan == 'true' || steps.filter.outputs.have_changes == 'true'
+      shell: bash
+      env:
+        LINTER_VERSION: ${{ inputs.linter_version }}
+      run: |
+        # Build the uvx '--from' specifier; pin to a version when supplied.
+        # Validate the user-supplied value against a conservative pattern
+        # before writing it to GITHUB_OUTPUT to avoid workflow command
+        # injection (e.g. embedded newlines).
+        if [ -n "$LINTER_VERSION" ]; then
+          if ! printf '%s' "$LINTER_VERSION" | \
+            grep -Eq '^[A-Za-z0-9][A-Za-z0-9._+-]*$'; then
+            echo "Error: linter_version contains invalid characters ❌"
+            echo "Provided value: ${LINTER_VERSION}"
+            exit 1
+          fi
+          spec="gha-workflow-linter==${LINTER_VERSION}"
+          echo "Pinning gha-workflow-linter to version: ${LINTER_VERSION}"
+        else
+          spec="gha-workflow-linter"
+          echo "Using latest released gha-workflow-linter from PyPI"
+        fi
+        echo "uvx_from=${spec}" >> "$GITHUB_OUTPUT"
 
     - name: 'Run gha-workflow-linter (pull request changed files)'
       # yamllint disable-line rule:line-length
@@ -163,7 +211,7 @@ runs:
         while IFS= read -r f; do
           [ -z "$f" ] && continue
           args+=(--files "$f")
-        done < matched.txt
+        done < "${{ steps.filter.outputs.matched_file }}"
 
         echo "Running gha-workflow-linter on changed files only"
         uvx --from "${{ steps.resolve_version.outputs.uvx_from }}" \

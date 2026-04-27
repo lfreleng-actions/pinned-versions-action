@@ -23,12 +23,16 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: read
+      # Needed on pull_request events: the composite action invokes
+      # repository-metadata-action to list PR-changed files.
+      pull-requests: read
     steps:
       - name: 'Checkout repository'
         # yamllint disable-line rule:line-length
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       # Test 1: default behaviour (pull_request -> changed-files only;
       # other events -> full scan)
@@ -61,6 +65,7 @@ jobs:
           repository: "lfreleng-actions/test-python-project"
           path: 'test-python-project'
           fetch-depth: 0
+          persist-credentials: false
 
       # yamllint disable-line rule:line-length
       - name: "Running local action: ${{ github.repository }} [test-python-project]"
