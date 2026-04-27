@@ -20,18 +20,23 @@ jobs:
   tests:
     name: "Test local GitHub Action"
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     permissions:
       contents: read
     steps:
       - name: 'Checkout repository'
+        # yamllint disable-line rule:line-length
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      # Initial test of local repository (testing.yaml)
+      # Initial test of local repository (this repo's own workflows)
       - name: "Running local action: ${{ github.repository }}"
         uses: ./
+        with:
+          no_checkout: true
 
       # Perform setup prior to running test(s)
       - name: 'Checkout sample project repository'
+        # yamllint disable-line rule:line-length
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           repository: "lfreleng-actions/test-python-project"
@@ -52,6 +57,7 @@ jobs:
         continue-on-error: true
         with:
           path_prefix: "/tmp/invalid-path"
+          no_checkout: true
 
       # Failure testing is also important
       - name: "Error if step above did NOT fail"

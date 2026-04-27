@@ -14,7 +14,7 @@ inputs:
   no_checkout:
     description: 'Do not checkout local repository; used for testing'
     required: false
-    default: false
+    default: 'false'
 
 runs:
   using: 'composite'
@@ -22,28 +22,9 @@ runs:
     # Checkout repository on manual invocation
     - name: 'Checkout repository'
       # yamllint disable-line rule:line-length
-      if: github.event_name == 'workflow_dispatch'
+      if: github.event_name == 'workflow_dispatch' && inputs.no_checkout != 'true'
       # yamllint disable-line rule:line-length
       uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-
-    - name: 'Check path_prefix directory'
-      if: inputs.path_prefix != '.'
-      shell: bash
-      run: |
-        if [ ! -d "${{ inputs.path_prefix }}" ]; then
-          echo 'Error: path_prefix is not a valid directory ❌'
-          echo "${{ inputs.path_prefix }}"
-          exit 1
-        fi
-
-    # Scan all GitHub actions/workflows on manual invocation
-    - name: 'Audit all GitHub actions/workflows'
-      if: github.event_name == 'workflow_dispatch'
-      shell: bash
-      run: |
-        # Audit all GitHub actions/workflows
-        echo 'workflow_changes=true' >> "$GITHUB_ENV"
-        echo 'Auditing all actions/workflows ✅'
 
     # Checkout change when invoked on a pull request
     - name: 'Checkout pull request'
@@ -54,52 +35,29 @@ runs:
       with:
         ref: "${{ github.event.pull_request.head.sha }}"
 
-    # Get files changed in the pull request from upstream action
-    - name: 'Get changed files from action'
-      id: changed-files
-      if: github.event_name != 'workflow_dispatch'
-      # yamllint disable-line rule:line-length
-      uses: tj-actions/changed-files@9426d40962ed5378910ee2e21d5f8c6fcbf2dd96 # v47.0.6
-      with:
-        since_last_remote_commit: true
-        files: |
-          .github/**/*.{yml,yaml}
-
-    - name: 'Prune unmodified workflows/actions from scope'
-      if: github.event_name != 'workflow_dispatch'
-      env:
-        # yamllint disable-line rule:line-length
-        all_changed_files: "${{ steps.changed-files.outputs.all_changed_files }}"
+    - name: 'Check path_prefix directory'
+      if: inputs.path_prefix != '.'
       shell: bash
       run: |
-        # ✂️ Prune unmodified workflows/actions from scope
-        find ${{ inputs.path_prefix }}/.github -type f \
-          -name '*.yaml' -o -name '*.yml' > github.txt
-        for yamlfile in ${all_changed_files}; do
-          echo "$yamlfile" >> changed.txt
-        done
-        if [ ! -f 'changed.txt' ]; then
-          echo 'No changes in scope for check ⏩'
-          echo 'workflow_changes=false' >> "$GITHUB_ENV"
-        else
-          # grep exits 1 when no unmodified files remain (all files changed);
-          # use || to capture status before set -e can trigger on exit code 1
-          status=0
-          grep -Fvf changed.txt github.txt > unmodified.txt || status=$?
-          if [ "$status" -ne 0 ] && [ "$status" -ne 1 ]; then
-            echo "Error: grep failed with exit code $status" >&2
-            exit "$status"
-          fi
-          while IFS= read -r yamlfile
-          do
-            rm "$yamlfile"
-          done < unmodified.txt
-          echo 'workflow_changes=true' >> "$GITHUB_ENV"
-          echo 'Files found to check ✅'
-          cat changed.txt
+        # Validate path_prefix
+        if [ ! -d "${{ inputs.path_prefix }}" ]; then
+          echo 'Error: path_prefix is not a valid directory ❌'
+          echo "${{ inputs.path_prefix }}"
+          exit 1
         fi
 
-    - name: 'Ensure SHA pinned actions'
+    - name: 'Setup uv'
       # yamllint disable-line rule:line-length
-      uses: zgosalvez/github-actions-ensure-sha-pinned-actions@ca46236c6ce584ae24bc6283ba8dcf4b3ec8a066 # v5.0.4
-      if: env.workflow_changes == 'true'
+      uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+      with:
+        enable-cache: true
+
+    - name: 'Run gha-workflow-linter'
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+      run: |
+        # Run gha-workflow-linter via uvx (requires SHA pinning by default)
+        echo "Running gha-workflow-linter against: ${{ inputs.path_prefix }}"
+        uvx --from gha-workflow-linter gha-workflow-linter lint \
+          "${{ inputs.path_prefix }}"
