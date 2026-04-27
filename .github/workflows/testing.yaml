@@ -44,6 +44,15 @@ jobs:
           no_checkout: true
           full_scan: 'true'
 
+      # Test 2b: full scan with a pinned linter_version
+      # yamllint disable-line rule:line-length
+      - name: "Running local action: ${{ github.repository }} [pinned linter_version]"
+        uses: ./
+        with:
+          no_checkout: true
+          full_scan: 'true'
+          linter_version: '1.0.2'
+
       # Test 3: scan a sample external project
       - name: 'Checkout sample project repository'
         # yamllint disable-line rule:line-length

@@ -21,6 +21,13 @@ inputs:
       (default: pull_request events scan only changed workflow files)
     required: false
     default: 'false'
+  linter_version:
+    description: >-
+      Optional gha-workflow-linter version to install from PyPI
+      (e.g. '1.0.2'). When unset, uvx fetches the latest released
+      version on each run.
+    required: false
+    default: ''
 
 runs:
   using: 'composite'
@@ -61,6 +68,22 @@ runs:
       uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
       with:
         enable-cache: true
+
+    - name: 'Resolve gha-workflow-linter version'
+      id: resolve_version
+      shell: bash
+      env:
+        LINTER_VERSION: ${{ inputs.linter_version }}
+      run: |
+        # Build the uvx '--from' specifier; pin to a version when supplied
+        if [ -n "$LINTER_VERSION" ]; then
+          spec="gha-workflow-linter==${LINTER_VERSION}"
+          echo "Pinning gha-workflow-linter to version: ${LINTER_VERSION}"
+        else
+          spec="gha-workflow-linter"
+          echo "Using latest released gha-workflow-linter from PyPI"
+        fi
+        echo "uvx_from=${spec}" >> "$GITHUB_OUTPUT"
 
     # ------------------------------------------------------------------
     # Pull request: gather changed workflow/action YAML files via
@@ -143,8 +166,8 @@ runs:
         done < matched.txt
 
         echo "Running gha-workflow-linter on changed files only"
-        uvx --from gha-workflow-linter gha-workflow-linter lint \
-          "${args[@]}"
+        uvx --from "${{ steps.resolve_version.outputs.uvx_from }}" \
+          gha-workflow-linter lint "${args[@]}"
 
     # ------------------------------------------------------------------
     # Full scan: workflow_dispatch, push, schedule, full_scan=true, etc.
@@ -159,6 +182,7 @@ runs:
         # Run gha-workflow-linter against the full path_prefix
         # (no auto-fix: see note in PR-changed-files step above)
         echo "Running gha-workflow-linter against: ${{ inputs.path_prefix }}"
-        uvx --from gha-workflow-linter gha-workflow-linter lint \
+        uvx --from "${{ steps.resolve_version.outputs.uvx_from }}" \
+          gha-workflow-linter lint \
           --no-auto-fix \
           "${{ inputs.path_prefix }}"

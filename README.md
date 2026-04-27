@@ -58,8 +58,25 @@ jobs:
 | path_prefix   | False    | '.' (current working directory) | Directory location containing project code               |
 | no_checkout   | False    | false                           | Don't perform a checkout of the local repository         |
 | full_scan     | False    | false                           | Force a full repository scan, even on `pull_request`     |
+| linter_version| False    | (latest)                        | Pin `gha-workflow-linter` to a specific PyPI version     |
 
 <!-- markdownlint-enable MD013 -->
+
+### Pinning the linter version
+
+By default the action runs the **latest** released `gha-workflow-linter`
+from PyPI on each invocation. To pin a specific version (and avoid
+non-deterministic behaviour across runs), set `linter_version`:
+
+```yaml
+- name: 'Check Pinned Versions'
+  uses: lfreleng-actions/pinned-versions-action@main
+  with:
+    linter_version: '1.0.2'
+```
+
+When set, the action invokes
+`uvx --from gha-workflow-linter==<version> ...`.
 
 ## Behaviour
 
