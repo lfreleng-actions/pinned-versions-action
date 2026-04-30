@@ -3,8 +3,16 @@
 # SPDX-FileCopyrightText: 2025 The Linux Foundation
 
 ci:
-  autofix_commit_msg: "Chore: pre-commit autoupdate"
-  autoupdate_commit_msg: "Chore: pre-commit autoupdate"
+  # pre-commit.ci sandbox prevents network calls; disable gha-workflow-linter
+  skip: [gha-workflow-linter]
+  autofix_commit_msg: |
+    Chore: pre-commit autofixes
+
+    Signed-off-by: pre-commit-ci[bot] <pre-commit-ci@users.noreply.github.com>
+  autoupdate_commit_msg: |
+    Chore: pre-commit autoupdate
+
+    Signed-off-by: pre-commit-ci[bot] <pre-commit-ci@users.noreply.github.com>
 
 exclude: "^docs/conf.py"
 
@@ -91,3 +99,29 @@ repos:
     rev: 2ccb47ff45ad361a21071a7eedda4c37e6ae8c5a  # frozen: v2.4.2
     hooks:
       - id: codespell
+
+  # Requires a mirror, primary repo lacks .pre-commit-hooks.yaml
+  - repo: https://github.com/DetachHead/basedpyright-prek-mirror
+    rev: 2de179c8dd041d4caa777c4d97fecdb97a572e8d  # frozen: 1.39.2
+    hooks:
+      - id: basedpyright
+
+  - repo: https://github.com/lfreleng-actions/gha-workflow-linter
+    rev: a7caf8f3a1a05688d1cee46615ff94def617e5a3  # frozen: v1.0.2
+    hooks:
+      - id: gha-workflow-linter
+
+  - repo: https://github.com/python-jsonschema/check-jsonschema
+    rev: ed81924a8b1cecdaa570b072528fa80c9c4d6ccd  # frozen: 0.37.1
+    hooks:
+      - id: check-github-actions
+      - id: check-github-workflows
+      - id: check-jsonschema
+        name: Check GitHub Workflows set timeout-minutes
+        args:
+          - --builtin-schema
+          - github-workflows-require-timeout
+        files: ^\.github/workflows/[^/]+$
+        types:
+          - yaml
+      - id: check-readthedocs

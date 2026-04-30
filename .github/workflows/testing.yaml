@@ -19,32 +19,63 @@ jobs:
   ### Test the GitHub Action in this Repository ###
   tests:
     name: "Test local GitHub Action"
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
+      # Needed on pull_request events: the composite action invokes
+      # repository-metadata-action to list PR-changed files.
+      pull-requests: read
     steps:
       - name: 'Checkout repository'
+        # yamllint disable-line rule:line-length
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
 
-      # Initial test of local repository (testing.yaml)
+      # Test 1: default behaviour (pull_request -> changed-files only;
+      # other events -> full scan)
       - name: "Running local action: ${{ github.repository }}"
         uses: ./
+        with:
+          no_checkout: true
 
-      # Perform setup prior to running test(s)
+      # Test 2: force a full scan irrespective of event
+      - name: "Running local action: ${{ github.repository }} [full_scan]"
+        uses: ./
+        with:
+          no_checkout: true
+          full_scan: 'true'
+
+      # Test 2b: full scan with a pinned linter_version
+      # yamllint disable-line rule:line-length
+      - name: "Running local action: ${{ github.repository }} [pinned linter_version]"
+        uses: ./
+        with:
+          no_checkout: true
+          full_scan: 'true'
+          linter_version: '1.0.2'
+
+      # Test 3: scan a sample external project
       - name: 'Checkout sample project repository'
+        # yamllint disable-line rule:line-length
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           repository: "lfreleng-actions/test-python-project"
           path: 'test-python-project'
+          fetch-depth: 0
+          persist-credentials: false
 
-      # Test downloaded sample Python project
       # yamllint disable-line rule:line-length
       - name: "Running local action: ${{ github.repository }} [test-python-project]"
         uses: ./
         with:
           path_prefix: 'test-python-project'
           no_checkout: true
+          full_scan: 'true'
 
+      # Test 4: invalid path_prefix should fail
       # yamllint disable-line rule:line-length
       - name: "Running local action: ${{ github.repository }} [Override Failure]"
         uses: ./
@@ -52,8 +83,8 @@ jobs:
         continue-on-error: true
         with:
           path_prefix: "/tmp/invalid-path"
+          no_checkout: true
 
-      # Failure testing is also important
       - name: "Error if step above did NOT fail"
         if: steps.failure.outcome == 'success'
         shell: bash
