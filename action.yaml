@@ -57,11 +57,13 @@ runs:
     - name: 'Check path_prefix directory'
       if: inputs.path_prefix != '.'
       shell: bash
+      env:
+        INPUT_PATH_PREFIX: ${{ inputs.path_prefix }}
       run: |
         # Validate path_prefix
-        if [ ! -d "${{ inputs.path_prefix }}" ]; then
+        if [ ! -d "$INPUT_PATH_PREFIX" ]; then
           echo 'Error: path_prefix is not a valid directory ❌'
-          echo "${{ inputs.path_prefix }}"
+          echo "$INPUT_PATH_PREFIX"
           exit 1
         fi
 
@@ -204,6 +206,8 @@ runs:
       shell: bash
       env:
         GITHUB_TOKEN: ${{ github.token }}
+        MATCHED_FILE: ${{ steps.filter.outputs.matched_file }}
+        UVX_FROM: ${{ steps.resolve_version.outputs.uvx_from }}
       run: |
         # Lint only the changed workflow/action files (no auto-fix in CI:
         # rewrites in ephemeral runners are pointless and would mask errors)
@@ -211,10 +215,10 @@ runs:
         while IFS= read -r f; do
           [ -z "$f" ] && continue
           args+=(--files "$f")
-        done < "${{ steps.filter.outputs.matched_file }}"
+        done < "$MATCHED_FILE"
 
         echo "Running gha-workflow-linter on changed files only"
-        uvx --from "${{ steps.resolve_version.outputs.uvx_from }}" \
+        uvx --from "$UVX_FROM" \
           gha-workflow-linter lint "${args[@]}"
 
     # ------------------------------------------------------------------
@@ -226,11 +230,14 @@ runs:
       shell: bash
       env:
         GITHUB_TOKEN: ${{ github.token }}
+        INPUT_PATH_PREFIX: ${{ inputs.path_prefix }}
+        UVX_FROM: ${{ steps.resolve_version.outputs.uvx_from }}
       run: |
         # Run gha-workflow-linter against the full path_prefix
         # (no auto-fix: see note in PR-changed-files step above)
-        echo "Running gha-workflow-linter against: ${{ inputs.path_prefix }}"
-        uvx --from "${{ steps.resolve_version.outputs.uvx_from }}" \
+        echo "Running gha-workflow-linter against: $INPUT_PATH_PREFIX"
+        uvx --from "$UVX_FROM" \
           gha-workflow-linter lint \
           --no-auto-fix \
-          "${{ inputs.path_prefix }}"
+          -- \
+          "$INPUT_PATH_PREFIX"
