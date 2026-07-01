@@ -79,7 +79,7 @@ runs:
       # yamllint disable-line rule:line-length
       if: github.event_name == 'pull_request' && inputs.full_scan != 'true'
       # yamllint disable-line rule:line-length
-      uses: lfreleng-actions/repository-metadata-action@ceabcd987d13d7bfefd2372e01eebb0ddac45956 # v0.2.0
+      uses: lfreleng-actions/repository-metadata-action@fa041b9502f8c81930b5afc9d30d1c8ecb22e790 # v0.2.1
       with:
         github_token: ${{ github.token }}
         github_summary: 'false'
