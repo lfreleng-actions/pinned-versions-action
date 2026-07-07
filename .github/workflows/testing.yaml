@@ -13,6 +13,10 @@ on:
   pull_request:
     branches: ["main"]
 
+concurrency:
+  group: "${{ github.workflow }}-${{ github.ref }}"
+  cancel-in-progress: true
+
 permissions: {}
 
 jobs:
@@ -23,9 +27,7 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: read
-      # Needed on pull_request events: the composite action invokes
-      # repository-metadata-action to list PR-changed files.
-      pull-requests: read
+      pull-requests: read  # Read PR metadata to list changed files
     steps:
       - name: 'Checkout repository'
         # yamllint disable-line rule:line-length
