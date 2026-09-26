@@ -39,13 +39,13 @@ jobs:
       # Test 1: default behaviour (pull_request -> changed-files only;
       # other events -> full scan)
       - name: "Running local action: ${{ github.repository }}"
-        uses: ./
+        uses: $/
         with:
           no_checkout: true
 
       # Test 2: force a full scan irrespective of event
       - name: "Running local action: ${{ github.repository }} [full_scan]"
-        uses: ./
+        uses: $/
         with:
           no_checkout: true
           full_scan: 'true'
@@ -53,7 +53,7 @@ jobs:
       # Test 2b: full scan with a pinned linter_version
       # yamllint disable-line rule:line-length
       - name: "Running local action: ${{ github.repository }} [pinned linter_version]"
-        uses: ./
+        uses: $/
         with:
           no_checkout: true
           full_scan: 'true'
@@ -71,7 +71,7 @@ jobs:
 
       # yamllint disable-line rule:line-length
       - name: "Running local action: ${{ github.repository }} [test-python-project]"
-        uses: ./
+        uses: $/
         with:
           path_prefix: 'test-python-project'
           no_checkout: true
@@ -80,7 +80,7 @@ jobs:
       # Test 4: invalid path_prefix should fail
       # yamllint disable-line rule:line-length
       - name: "Running local action: ${{ github.repository }} [Override Failure]"
-        uses: ./
+        uses: $/
         id: failure
         continue-on-error: true
         with:
