@@ -94,3 +94,99 @@ jobs:
           # Error if step above did NOT fail
           echo "Error: previous test step did NOT fail ❌"
           exit 1
+
+  # setup-uv must not run an interpreter, or read uv settings, from the
+  # checkout. Plant a .venv, a .python-version and a uv.toml in the
+  # workspace and path_prefix whose interpreters record that they ran.
+  # full_scan skips repository-metadata-action, whose pinned release
+  # still runs its own setup-uv in the workspace.
+  test-workspace-python-isolation:
+    name: "Test workspace Python files are not used"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: 'Checkout repository'
+        # yamllint disable-line rule:line-length
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: 'Checkout sample project repository'
+        # yamllint disable-line rule:line-length
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: "lfreleng-actions/test-python-project"
+          path: 'test-python-project'
+          persist-credentials: false
+
+      - name: 'Plant .venv and .python-version interpreters'
+        shell: bash
+        run: |
+          # Each planted interpreter appends to the marker and exits 1
+          set -euo pipefail
+          marker="${RUNNER_TEMP}/planted-ran"
+          rm -f "$marker"
+          plant_exe() {
+            printf '#!/bin/sh\necho "%s $*" >> "%s"\nexit 1\n' \
+              "$2" "$marker" > "$1"
+            chmod +x "$1"
+          }
+          for dir in "$GITHUB_WORKSPACE" "$GITHUB_WORKSPACE/test-python-project"
+          do
+            mkdir -p "$dir/.venv/bin"
+            printf 'home = /usr/bin\nversion = 3.12.0\n' \
+              > "$dir/.venv/pyvenv.cfg"
+            plant_exe "$dir/.venv/bin/python3" "venv:$dir"
+            plant_exe "$dir/.venv/bin/python" "venv:$dir"
+            plant_exe "$dir/planted-pv-python" "python-version:$dir"
+            echo "$dir/planted-pv-python" > "$dir/.python-version"
+          done
+
+      # Without a uv.toml, uv reaches interpreter discovery
+      - name: "Running local action with planted interpreters"
+        uses: $/
+        with:
+          no_checkout: true
+          full_scan: 'true'
+
+      - name: 'Check no planted interpreter ran'
+        shell: bash
+        run: |
+          # The marker exists only if a planted interpreter started
+          if [ -e "${RUNNER_TEMP}/planted-ran" ]; then
+            echo 'Error: a planted workspace interpreter ran ❌'
+            cat "${RUNNER_TEMP}/planted-ran"
+            exit 1
+          fi
+          echo 'No planted interpreter ran ✅'
+
+      - name: 'Plant uv.toml'
+        shell: bash
+        run: |
+          # setup-uv would install uv 0.0.1 and use this cache directory
+          for dir in "$GITHUB_WORKSPACE" "$GITHUB_WORKSPACE/test-python-project"
+          do
+            printf '%s\n' 'cache-dir = "/nonexistent/planted-cache"' \
+              'required-version = "==0.0.1"' > "$dir/uv.toml"
+          done
+
+      # yamllint disable-line rule:line-length
+      - name: "Running local action with planted interpreters and uv.toml [test-python-project]"
+        uses: $/
+        with:
+          path_prefix: 'test-python-project'
+          no_checkout: true
+          full_scan: 'true'
+
+      - name: 'Check no planted file was used'
+        shell: bash
+        run: |
+          # The marker exists only if a planted interpreter started
+          if [ -e "${RUNNER_TEMP}/planted-ran" ]; then
+            echo 'Error: a planted workspace interpreter ran ❌'
+            cat "${RUNNER_TEMP}/planted-ran"
+            exit 1
+          fi
+          echo 'Both runs passed; no planted interpreter ran ✅'
