@@ -164,14 +164,28 @@ runs:
     # linter will actually run. On pull_request events that touch no
     # workflow/action YAML, this avoids an unnecessary uv install and
     # PyPI fetch.
+    #
+    # setup-uv runs the interpreter that 'uv python find' selects in its
+    # working directory, and reads uv.toml/pyproject.toml settings there.
+    # Point it at this action's own files, not the checkout in the
+    # workspace; the env settings also stop uv from using a .venv,
+    # .python-version or uv config from a parent directory. The cache
+    # holds the gha-workflow-linter install, which no workspace file
+    # describes, so key it on this action's definition instead.
     # ------------------------------------------------------------------
     - name: 'Setup uv'
       # yamllint disable-line rule:line-length
       if: github.event_name != 'pull_request' || inputs.full_scan == 'true' || steps.filter.outputs.have_changes == 'true'
       # yamllint disable-line rule:line-length
       uses: astral-sh/setup-uv@18d369b23da25a81e9458561248e1aafff6a70fa # v10.3.1
+      env:
+        UV_NO_CONFIG: '1'
+        UV_SYSTEM_PYTHON: '1'
+        UV_NO_PROJECT: '1'
       with:
+        working-directory: ${{ github.action_path }}
         enable-cache: true
+        cache-dependency-glob: ${{ github.action_path }}/action.yaml
 
     - name: 'Resolve gha-workflow-linter version'
       id: resolve_version
