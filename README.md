@@ -14,11 +14,23 @@ Linux Foundation Release Engineering team. It validates that GitHub Actions
 workflow and action calls in the repository pin to immutable commit SHAs,
 and that the referenced repositories, tags, branches and commits exist.
 
-The action installs and runs the CLI via [`uvx`][uvx]
-(`astral-sh/setup-uv`), so callers need no local Python environment.
+The action uses [`uv`][uv] (`astral-sh/setup-uv`) to install its own
+Python and the CLI under the runner's temporary directory, so callers
+need no local Python environment. Python and uv settings in the caller's
+job environment (`PATH`, `UV_PYTHON`, `VIRTUAL_ENV`, `PYTHONPATH` and
+similar) cannot choose or alter the interpreter the action's own steps
+run. Those steps call uv with an empty environment apart from proxy and
+TLS certificate settings, so caller uv settings such as `UV_INDEX_URL`
+do not apply.
+
+The action trusts the caller's `PATH`. It finds system tools such as
+`env` through `PATH`, as the runner finds `bash` for every step and
+`astral-sh/setup-uv` finds its own helpers. A caller that puts a
+directory from its checkout on `PATH` already controls those, and no
+composite action can defend against that.
 
 [gwl]: https://github.com/lfreleng-actions/gha-workflow-linter
-[uvx]: https://docs.astral.sh/uv/guides/tools/
+[uv]: https://docs.astral.sh/uv/
 
 ## Recommended Event Triggers
 
@@ -95,8 +107,7 @@ non-deterministic behaviour across runs), set `linter_version`:
 
 <!-- markdownlint-enable MD013 -->
 
-When set, the action invokes
-`uvx --from gha-workflow-linter==<version> ...`.
+When set, the action installs `gha-workflow-linter==<version>`.
 
 ## Behaviour
 
