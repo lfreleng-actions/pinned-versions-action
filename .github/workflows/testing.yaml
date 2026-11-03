@@ -190,3 +190,161 @@ jobs:
             exit 1
           fi
           echo 'Both runs passed; no planted interpreter ran ✅'
+
+  # A composite action inherits the caller's environment. Plant bait
+  # interpreters, uv and stdlib-named modules in the workspace, export
+  # the settings an earlier caller step could write to GITHUB_ENV, and
+  # check that neither run (cold, then warm) starts any of the bait.
+  test-caller-environment-isolation:
+    # yamllint disable-line rule:line-length
+    name: "Test caller environment isolation [${{ matrix.os }}, ${{ matrix.selector }}]"
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+        selector: [request, active-environment]
+    steps:
+      - name: 'Checkout repository'
+        # yamllint disable-line rule:line-length
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: 'Plant bait and hostile settings'
+        shell: bash
+        env:
+          SELECTOR: ${{ matrix.selector }}
+        run: |
+          # Each bait appends to the marker; executables then exit 1
+          set -euo pipefail
+          marker="${RUNNER_TEMP}/bait-ran"
+          rm -f "$marker"
+          ws="$GITHUB_WORKSPACE"
+          plant_exe() {
+            printf '#!/bin/sh\necho "%s $*" >> "%s"\nexit 1\n' \
+              "$2" "$marker" > "$1"
+            chmod +x "$1"
+          }
+          plant_module() {
+            printf "open('%s', 'a').write('import %s' + chr(10))\n" \
+              "$marker" "$2" > "$1"
+          }
+          mkdir -p "$ws/.venv/bin" "$ws/.venv/conda-meta" "$ws/xdg-bin" \
+            "$ws/pkg/urllib" "$ws/urllib"
+          for exe in python python3 python3.13 uv; do
+            plant_exe "$ws/.venv/bin/$exe" "venv:$exe"
+          done
+          printf 'home = /usr/bin\nversion = 3.13.0\n' > "$ws/.venv/pyvenv.cfg"
+          for exe in env bash; do
+            plant_exe "$ws/xdg-bin/$exe" "xdg-bin:$exe"
+          done
+          for dir in "$ws" "$ws/pkg"; do
+            for mod in json base64 sitecustomize usercustomize; do
+              plant_module "$dir/$mod.py" "$mod"
+            done
+            plant_module "$dir/urllib/__init__.py" urllib
+          done
+
+          case "$RUNNER_ARCH" in
+            X64) arch=x86_64 ;;
+            ARM64) arch=aarch64 ;;
+            *) echo "Error: unexpected runner architecture ❌"; exit 1 ;;
+          esac
+          # The runner puts GITHUB_PATH entries ahead of PATH, as a
+          # caller's step could; a PATH= line in GITHUB_ENV would not be
+          echo "$ws/.venv/bin" >> "$GITHUB_PATH"
+          {
+            echo "PYTHONPATH=pkg:."
+            echo "PYTHONHOME=$ws/.venv"
+            echo "PYTHONUSERBASE=$ws/userbase"
+            echo "PYTHONSTARTUP=$ws/json.py"
+            echo "PYTHONEXECUTABLE=$ws/.venv/bin/python3"
+            echo "__PYVENV_LAUNCHER__=$ws/.venv/bin/python3"
+            echo "UV_NO_CACHE=1"
+            echo "UV_PYTHON_ARCH=$arch"
+            echo "UV_PYTHON_INSTALL_MIRROR=https://127.0.0.1:9"
+            echo "XDG_BIN_HOME=$ws/xdg-bin"
+            if [ "$SELECTOR" = request ]; then
+              echo "UV_PYTHON=$ws/.venv/bin/python3.13"
+              echo "UV_PYTHON_SEARCH_PATH=$ws/.venv/bin"
+              echo "UV_PYTHON_INSTALL_DIR=$ws/uv-python"
+              echo "UV_PYTHON_PREFERENCE=only-system"
+            else
+              # UV_PYTHON stays unset: it would mask environment discovery
+              echo "VIRTUAL_ENV=$ws/.venv"
+              echo "CONDA_PREFIX=$ws/.venv"
+              echo "CONDA_DEFAULT_ENV=base"
+              echo "UV_INTERNAL__PARENT_INTERPRETER=$ws/.venv/bin/python3.13"
+              echo "UV_INTERNAL__TEST_PYTHON_MANAGED=$ws/.venv"
+              echo "UV_CACHE_DIR=$ws/uv-cache"
+            fi
+          } >> "$GITHUB_ENV"
+
+      - name: 'Control: check the bait is live'
+        shell: bash
+        run: |
+          # A Python that is not isolated must start the bait
+          set -uo pipefail
+          marker="${RUNNER_TEMP}/bait-ran"
+          python3 -c 'import json' || true
+          if ! grep -q '^venv:python3' "$marker"; then
+            echo 'Error: PATH bait did not run ❌'
+            exit 1
+          fi
+          # A real interpreter by absolute path: a PATH lookup here returns
+          # the python3 bash has already hashed, the bait, on macOS
+          env -u PYTHONHOME -u PYTHONEXECUTABLE -u __PYVENV_LAUNCHER__ \
+            /usr/bin/python3 -c 'import json' || true
+          if ! grep -q '^import json' "$marker"; then
+            echo 'Error: module bait did not run ❌'
+            exit 1
+          fi
+          cat "$marker"
+          rm -f "$marker"
+          echo 'Bait is live ✅'
+
+      - name: "Running local action [cold]"
+        id: cold
+        uses: $/
+        with:
+          no_checkout: true
+          full_scan: 'true'
+
+      - name: "Running local action [warm]"
+        id: warm
+        uses: $/
+        with:
+          no_checkout: true
+          full_scan: 'true'
+
+      - name: 'Check no bait ran'
+        if: always()
+        shell: bash
+        env:
+          COLD: ${{ steps.cold.outcome }}
+          WARM: ${{ steps.warm.outcome }}
+        run: |
+          # The marker exists only if bait started
+          status=0
+          if [ -e "${RUNNER_TEMP}/bait-ran" ]; then
+            echo 'Error: bait ran ❌'
+            cat "${RUNNER_TEMP}/bait-ran"
+            status=1
+          fi
+          case ":$PATH:" in
+            *":$GITHUB_WORKSPACE/xdg-bin:"*)
+              echo 'Error: the caller XDG bin directory is on PATH ❌'
+              status=1 ;;
+          esac
+          if [ "$COLD" != success ] || [ "$WARM" != success ]; then
+            echo "Error: action runs did not succeed: $COLD, $WARM ❌"
+            status=1
+          fi
+          if [ "$status" -eq 0 ]; then
+            echo 'Both runs passed; no bait ran ✅'
+          fi
+          exit "$status"

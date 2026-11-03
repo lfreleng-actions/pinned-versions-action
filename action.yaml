@@ -24,8 +24,8 @@ inputs:
   linter_version:
     description: >-
       Optional gha-workflow-linter version to install from PyPI
-      (e.g. '1.0.2'). When unset, uvx fetches the latest released
-      version on each run.
+      (e.g. '1.0.2'). When unset, the action installs the latest
+      released version on each run.
     required: false
     default: ''
 
@@ -165,27 +165,69 @@ runs:
     # workflow/action YAML, this avoids an unnecessary uv install and
     # PyPI fetch.
     #
-    # setup-uv runs the interpreter that 'uv python find' selects in its
-    # working directory, and reads uv.toml/pyproject.toml settings there.
-    # Point it at this action's own files, not the checkout in the
-    # workspace; the env settings also stop uv from using a .venv,
-    # .python-version or uv config from a parent directory. The cache
-    # holds the gha-workflow-linter install, which no workspace file
-    # describes, so key it on this action's definition instead.
+    # A composite action inherits the caller's environment, so neither
+    # workspace files nor caller variables (PATH, UV_PYTHON,
+    # VIRTUAL_ENV, CONDA_PREFIX, PYTHONPATH and so on) may choose the
+    # interpreter this action runs. setup-uv's only uv call for these
+    # inputs is "uv python find", whose result it executes. An invalid
+    # preference makes uv refuse its arguments before any lookup;
+    # setup-uv then reports the Python version as "unknown", which
+    # nothing reads.
     # ------------------------------------------------------------------
     - name: 'Setup uv'
+      id: setup-uv
       # yamllint disable-line rule:line-length
       if: github.event_name != 'pull_request' || inputs.full_scan == 'true' || steps.filter.outputs.have_changes == 'true'
       # yamllint disable-line rule:line-length
       uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2  # v10.3.3
+      with:
+        working-directory: "${{ github.action_path }}"
+        # Without it setup-uv puts the caller's HOME/XDG_* bin dir on PATH
+        tool-bin-dir: "${{ runner.temp }}/pinned-versions-action/bin"
+        # The post-step "uv cache prune" would hit the invalid preference
+        enable-cache: false
       env:
         UV_NO_CONFIG: '1'
-        UV_SYSTEM_PYTHON: '1'
         UV_NO_PROJECT: '1'
-      with:
-        working-directory: ${{ github.action_path }}
-        enable-cache: true
-        cache-dependency-glob: ${{ github.action_path }}/action.yaml
+        UV_PYTHON_PREFERENCE: 'lookup-disabled'
+        # Inherited, it makes setup-uv probe uv, which the line above fails
+        UV_PYTHON_ARCH: ''
+        # yamllint disable-line rule:line-length
+        UV_PYTHON_INSTALL_DIR: "${{ runner.temp }}/pinned-versions-action/python"
+
+    # A trusted interpreter: uv installs its own pinned, hash-checked
+    # build. uv runs with an empty environment plus an allow-list, so
+    # no caller variable can pick or redirect the interpreter.
+    - name: 'Install Python'
+      id: python
+      # yamllint disable-line rule:line-length
+      if: github.event_name != 'pull_request' || inputs.full_scan == 'true' || steps.filter.outputs.have_changes == 'true'
+      shell: bash
+      working-directory: "${{ github.action_path }}"
+      env:
+        UV: "${{ steps.setup-uv.outputs.uv-path }}"
+        INSTALL_DIR: "${{ runner.temp }}/pinned-versions-action/python"
+        CACHE_DIR: "${{ runner.temp }}/pinned-versions-action/cache"
+        PYTHON_VERSION: '3.13'
+      run: |
+        # Install a uv-managed Python and record its absolute path
+        clean=(UV_NO_CONFIG=1 UV_NO_PROJECT=1
+          "UV_PYTHON_INSTALL_DIR=$INSTALL_DIR" "UV_CACHE_DIR=$CACHE_DIR")
+        for name in HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY http_proxy \
+            https_proxy all_proxy no_proxy SSL_CERT_FILE SSL_CERT_DIR \
+            UV_NATIVE_TLS; do
+          if [ -n "${!name+set}" ]; then clean+=("$name=${!name}"); fi
+        done
+        env -i "${clean[@]}" "$UV" python install --quiet --no-bin \
+          "$PYTHON_VERSION"
+        PYTHON=$(env -i "${clean[@]}" "$UV" python find --managed-python \
+          "$PYTHON_VERSION")
+        case "$PYTHON" in
+          "$INSTALL_DIR"/*) ;;
+          *) echo "Error: uv found Python outside its install directory ❌"
+             exit 1 ;;
+        esac
+        echo "path=$PYTHON" >> "$GITHUB_OUTPUT"
 
     - name: 'Resolve gha-workflow-linter version'
       id: resolve_version
@@ -195,7 +237,7 @@ runs:
       env:
         LINTER_VERSION: ${{ inputs.linter_version }}
       run: |
-        # Build the uvx '--from' specifier; pin to a version when supplied.
+        # Build the requirement specifier; pin to a version when supplied.
         # Validate the user-supplied value against a conservative pattern
         # before writing it to GITHUB_OUTPUT to avoid workflow command
         # injection (e.g. embedded newlines).
@@ -212,7 +254,38 @@ runs:
           spec="gha-workflow-linter"
           echo "Using latest released gha-workflow-linter from PyPI"
         fi
-        echo "uvx_from=${spec}" >> "$GITHUB_OUTPUT"
+        echo "linter_spec=${spec}" >> "$GITHUB_OUTPUT"
+
+    # Install the linter into an action-owned virtual environment built
+    # on the trusted interpreter. uv queries that interpreter, which
+    # would read caller PYTHON* variables (PYTHONHOME redirects the
+    # install), so uv again runs with an empty environment plus the
+    # allow-list from the step above.
+    - name: 'Install gha-workflow-linter'
+      id: install
+      # yamllint disable-line rule:line-length
+      if: github.event_name != 'pull_request' || inputs.full_scan == 'true' || steps.filter.outputs.have_changes == 'true'
+      shell: bash
+      working-directory: "${{ github.action_path }}"
+      env:
+        UV: "${{ steps.setup-uv.outputs.uv-path }}"
+        PYTHON: "${{ steps.python.outputs.path }}"
+        VENV: "${{ runner.temp }}/pinned-versions-action/venv"
+        CACHE_DIR: "${{ runner.temp }}/pinned-versions-action/cache"
+        LINTER_SPEC: "${{ steps.resolve_version.outputs.linter_spec }}"
+      run: |
+        # Create the environment afresh so a second run reinstalls
+        clean=(UV_NO_CONFIG=1 UV_NO_PROJECT=1 "UV_CACHE_DIR=$CACHE_DIR")
+        for name in HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY http_proxy \
+            https_proxy all_proxy no_proxy SSL_CERT_FILE SSL_CERT_DIR \
+            UV_NATIVE_TLS; do
+          if [ -n "${!name+set}" ]; then clean+=("$name=${!name}"); fi
+        done
+        env -i "${clean[@]}" "$UV" venv --no-config --quiet --clear \
+          --python "$PYTHON" "$VENV"
+        env -i "${clean[@]}" "$UV" pip install --no-config --quiet \
+          --python "$VENV/bin/python" "$LINTER_SPEC"
+        echo "venv=$VENV" >> "$GITHUB_OUTPUT"
 
     - name: 'Run gha-workflow-linter (pull request changed files)'
       # yamllint disable-line rule:line-length
@@ -221,7 +294,7 @@ runs:
       env:
         GITHUB_TOKEN: ${{ github.token }}
         MATCHED_FILE: ${{ steps.filter.outputs.matched_file }}
-        UVX_FROM: ${{ steps.resolve_version.outputs.uvx_from }}
+        VENV: ${{ steps.install.outputs.venv }}
       run: |
         # Lint only the changed workflow/action files (no auto-fix in CI:
         # rewrites in ephemeral runners are pointless and would mask errors)
@@ -232,8 +305,11 @@ runs:
         done < "$MATCHED_FILE"
 
         echo "Running gha-workflow-linter on changed files only"
-        uvx --from "$UVX_FROM" \
-          gha-workflow-linter lint "${args[@]}"
+        # -I keeps PYTHON* variables and the workspace out of sys.path;
+        # these two still override sys.executable, and so the venv, on -I
+        unset PYTHONEXECUTABLE __PYVENV_LAUNCHER__
+        "$VENV/bin/python" -I "$VENV/bin/gha-workflow-linter" \
+          lint "${args[@]}"
 
     # ------------------------------------------------------------------
     # Full scan: workflow_dispatch, push, schedule, full_scan=true, etc.
@@ -245,13 +321,14 @@ runs:
       env:
         GITHUB_TOKEN: ${{ github.token }}
         INPUT_PATH_PREFIX: ${{ inputs.path_prefix }}
-        UVX_FROM: ${{ steps.resolve_version.outputs.uvx_from }}
+        VENV: ${{ steps.install.outputs.venv }}
       run: |
         # Run gha-workflow-linter against the full path_prefix
         # (no auto-fix: see note in PR-changed-files step above)
         echo "Running gha-workflow-linter against: $INPUT_PATH_PREFIX"
-        uvx --from "$UVX_FROM" \
-          gha-workflow-linter lint \
+        # -I and unset: see the pull request changed files step above
+        unset PYTHONEXECUTABLE __PYVENV_LAUNCHER__
+        "$VENV/bin/python" -I "$VENV/bin/gha-workflow-linter" lint \
           --no-auto-fix \
           -- \
           "$INPUT_PATH_PREFIX"
