@@ -174,6 +174,25 @@ runs:
     # setup-uv then reports the Python version as "unknown", which
     # nothing reads.
     # ------------------------------------------------------------------
+    # setup-uv honours UV_NO_MODIFY_PATH, and a composite action cannot
+    # unset a variable its caller set, so refuse an inherited one here.
+    - name: 'Refuse an inherited UV_NO_MODIFY_PATH'
+      # yamllint disable-line rule:line-length
+      if: github.event_name != 'pull_request' || inputs.full_scan == 'true' || steps.filter.outputs.have_changes == 'true'
+      shell: bash
+      run: |
+        # Compare exported names, not env output, which multiline values
+        # can spoof; no pipe, so pipefail and SIGPIPE cannot skip it.
+        # Match any spelling: Windows treats variable names as caseless
+        shopt -s nocasematch
+        while IFS= read -r name; do
+          if [[ "$name" == UV_NO_MODIFY_PATH ]]; then
+            echo "Error: unset UV_NO_MODIFY_PATH to use this action ❌"
+            exit 1
+          fi
+        done < <(compgen -e)
+        shopt -u nocasematch
+
     - name: 'Setup uv'
       id: setup-uv
       # yamllint disable-line rule:line-length
