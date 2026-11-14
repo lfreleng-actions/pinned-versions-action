@@ -21,7 +21,9 @@ job environment (`PATH`, `UV_PYTHON`, `VIRTUAL_ENV`, `PYTHONPATH` and
 similar) cannot choose or alter the interpreter the action's own steps
 run. Those steps call uv with an empty environment apart from proxy and
 TLS certificate settings, so caller uv settings such as `UV_INDEX_URL`
-do not apply.
+do not apply. The action fails when the caller's environment sets
+`UV_NO_MODIFY_PATH`, in any letter case, because a composite action
+cannot unset a variable its caller set.
 
 The action trusts the caller's `PATH`. It finds system tools such as
 `env` through `PATH`, as the runner finds `bash` for every step and
